@@ -111,7 +111,6 @@ Agent 根据分析结果决定后续操作
 │
 ├── configs/                    # MCP Server 配置示例
 ├── data/                       # 本地记忆和会话数据
-├── docs/                       # 架构文档与实现状态
 │
 ├── internal/
 │   ├── approval/               # 全局审批管理
@@ -144,10 +143,10 @@ Agent 根据分析结果决定后续操作
 | 环境 / 组件 | 要求 |
 |---|---|
 | 操作系统 | Windows 10 / 11 x64 |
-| Go | Go 1.23 或更高版本 |
+| Go | Go 1.24 或更高版本（go.mod 声明 `go 1.24.0`） |
 | Shell | Windows PowerShell 5.1 |
 | 模型服务 | 兼容 OpenAI Responses API |
-| 视觉模型 | 模型及服务端需要支持 `input_image` |
+| 视觉模型 | 复用 `OPENAI_API_KEY` / `OPENAI_BASE_URL` / `OPENAI_MODEL`，服务端需要支持 `input_image` |
 | Node.js | 使用 Node.js 类型 MCP Server 时需要 |
 | 浏览器环境 | 使用 Playwright MCP 时需要准备对应浏览器运行环境 |
 
@@ -158,11 +157,9 @@ Agent 根据分析结果决定后续操作
 ### 1. 克隆项目
 
 ```powershell
-git clone <your-repository-url>
+git clone https://github.com/biglightstar/CodeAgent.git
 cd CodeAgent
 ```
-
-将 `<your-repository-url>` 替换为实际的 GitHub 仓库地址。
 
 ### 2. 安装 Go 依赖
 
@@ -170,9 +167,7 @@ cd CodeAgent
 go mod tidy
 ```
 
-该命令会整理项目依赖并生成 `go.sum`。
-
-建议将生成的 `go.sum` 一并提交到 GitHub，以便其他开发者使用相同的依赖校验信息。
+该命令会按 `go.mod` 下载依赖并校验 `go.sum`。仓库中已包含 `go.sum`，更新依赖后请把它一并提交。
 
 ### 3. 创建 MCP 配置文件
 
@@ -190,31 +185,35 @@ Copy-Item .\configs\mcp_servers.example.json .\configs\mcp_servers.json
 
 ```powershell
 $env:OPENAI_API_KEY = "你的模型服务 API Key"
-$env:OPENAI_BASE_URL = ""
-$env:OPENAI_MODEL = "deepseek-flash"
+$env:OPENAI_BASE_URL = "你的模型服务地址"    # 需兼容 Responses API
+$env:OPENAI_MODEL = "该服务支持的模型名称"
 
 $env:WORKSPACE_ROOT = "D:\CodeAgentWorkspace"
 $env:DATA_DIR = ".\data"
 $env:SKILLS_DIR = ".\skills"
 $env:MCP_CONFIG = ".\configs\mcp_servers.json"
+$env:SUMMARY_THRESHOLD = "40"
 ```
 
 配置项说明：
 
 | 环境变量 | 作用 |
 |---|---|
-| `OPENAI_API_KEY` | 模型服务 API Key |
-| `OPENAI_BASE_URL` | 模型服务 API 根地址 |
-| `OPENAI_MODEL` | 使用的模型名称 |
-| `WORKSPACE_ROOT` | 默认授权工作区 |
+| `OPENAI_API_KEY` | 模型服务 API Key，必填 |
+| `OPENAI_BASE_URL` | 模型服务 API 根地址；留空时使用 openai-go SDK 默认的 `https://api.openai.com/v1` |
+| `OPENAI_MODEL` | 使用的模型名称；留空时默认 `deepseek-flash` |
+| `WORKSPACE_ROOT` | 默认授权工作区；留空时使用当前工作目录 |
 | `DATA_DIR` | 本地记忆和会话数据目录 |
 | `SKILLS_DIR` | Skills 存放目录 |
 | `MCP_CONFIG` | MCP Server 配置文件路径 |
+| `SUMMARY_THRESHOLD` | 会话历史条目达到该数量时自动生成摘要，必须 ≥ 10，默认 40 |
 
 注意：
 
-- `OPENAI_BASE_URL` 留空时，程序默认连接 DeepSeek 官方服务地址（`https://api.deepseek.com`），对应默认模型 `deepseek-flash`。
-- 如果要使用 OpenAI 官方服务或其他兼容服务，必须显式填写对应的 `OPENAI_BASE_URL`，并将 `OPENAI_MODEL` 改为该服务支持的模型名称。
+- `OPENAI_BASE_URL` 留空时，客户端使用 openai-go SDK 的默认地址 `https://api.openai.com/v1`，**不是** DeepSeek 官方地址。
+- `OPENAI_MODEL` 的缺省值 `deepseek-flash` 只是配置层的默认名称，OpenAI 官方服务并没有这个模型。因此实际运行必须同时显式设置与服务匹配的 `OPENAI_BASE_URL` 和 `OPENAI_MODEL`，否则请求会失败。
+- 要让模型服务返回工具调用，该服务必须兼容 OpenAI Responses API 的 Function Calling；若选用 DeepSeek 等服务，需确认其提供了对应能力并使用该服务实际支持的模型名称。
+- 视觉分析复用同一组 `OPENAI_API_KEY` / `OPENAI_BASE_URL` / `OPENAI_MODEL`，项目没有独立的视觉模型配置项。
 - `WORKSPACE_ROOT` 必须指向已经存在的目录。
 - 多个授权工作区可以通过 Windows 路径列表分隔符 `;` 配置。
 - `.env.example` 仅作为配置模板，程序不会自动读取 `.env` 文件。
@@ -452,7 +451,7 @@ mcp__<server-id>__<tool-name>
 
 这样可以避免多个 MCP Server 提供同名工具时发生冲突。
 
-所有 MCP 工具调用均需要人工审批。连接、断开和重连操作也需要审批。
+MCP 工具默认需要人工审批；如果 MCP Server 为该工具声明了只读注解（`readOnlyHint`），该工具会自动执行。连接、断开和重连操作始终需要审批。
 
 当前仅实现 stdio transport，暂未实现 Streamable HTTP、OAuth 和远程身份认证。
 
@@ -507,6 +506,7 @@ data/
 ├── memory/
 │   └── long_term.md
 └── sessions/
+    ├── LATEST
     ├── <session-id>.json
     └── <session-id>.summary.md
 ```
@@ -514,6 +514,7 @@ data/
 | 文件 / 目录 | 用途 |
 |---|---|
 | `data/memory/long_term.md` | 长期记忆 |
+| `data/sessions/LATEST` | 最近一次会话的 ID，启动时据此恢复会话 |
 | `data/sessions/<session-id>.json` | 会话快照 |
 | `data/sessions/<session-id>.summary.md` | 会话摘要 |
 
@@ -523,7 +524,7 @@ data/
 
 1. **MCP 通信方式**：目前仅实现 stdio transport，尚未支持 Streamable HTTP 和 OAuth。
 2. **浏览器自动化**：需要单独安装 Node.js、配置并成功连接 Playwright MCP，未连接时无法使用浏览器操作和截图功能。
-3. **视觉模型兼容性**：视觉分析要求模型服务支持 Responses API 的 `input_image`。当前 Vision Client 使用项目配置的模型名称和 API 服务地址；不同兼容服务的图片输入支持情况需要实际验证。
+3. **视觉模型兼容性**：视觉分析要求模型服务支持 Responses API 的 `input_image`。当前 Vision Client 与主 Agent 共用同一份 `OPENAI_API_KEY`、`OPENAI_BASE_URL` 和 `OPENAI_MODEL`，不同兼容服务的图片输入支持情况需要实际验证。
 4. **图片处理限制**：当前视觉客户端支持 PNG、JPEG、WebP 和 GIF，单张图片大小限制为 8 MiB。
 5. **Windows 沙箱**：AppContainer 和 Job Object 已有 Windows x64 编译实现，但尚未完成真实 Windows 主机上的完整集成测试和安全审计。如果系统策略或父进程 Job 限制阻止创建受限进程，Shell Tool 会执行失败，不会自动退回普通 Shell。
 6. **视觉分析链路**：截图通过独立的 Responses API 请求进行分析，分析文本再返回 Agent；不是将截图直接追加到同一轮主 Agent 请求中的多模态上下文。
