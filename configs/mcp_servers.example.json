@@ -1,0 +1,22 @@
+{
+  "servers": [
+    {
+      "id": "example-tools",
+      "enabled": false,
+      "transport": "stdio",
+      "command": "node",
+      "args": ["path/to/your-mcp-server.js"],
+      "env": {},
+      "work_dir": ""
+    },
+    {
+      "id": "playwright",
+      "enabled": false,
+      "transport": "stdio",
+      "command": "npx",
+      "args": ["-y", "@playwright/mcp@latest"],
+      "env": {},
+      "work_dir": ""
+    }
+  ]
+}

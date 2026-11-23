@@ -1,0 +1,10 @@
+.env
+configs/mcp_servers.json
+data/**
+!data/README.md
+*.log
+/bin/
+/build/
+*.exe
+*.test
+*.out
